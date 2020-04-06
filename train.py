@@ -37,6 +37,9 @@ netActor.train()
 
 previousActorEpochLoss = 1000.0
 
+successByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=device)
+allByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=device)
+
 for epoch in range(start_epoch, stopEpochNumber):
     epochLoss = 0.0
     batchLoss = 0.0
@@ -47,18 +50,27 @@ for epoch in range(start_epoch, stopEpochNumber):
         if device.type == 'cuda':
             actorInputs, actorTargets = actorInputs.to(device), actorTargets.to(device)
             actorOutputs = netActor(actorInputs)
-            (_, max_index) = max(actorTargets, 1)
+            # print('Actor Inputs: ', actorInputs)
+            # print('Actor Outputs: ', actorOutputs)
+            # print('Actor Targets: ', actorTargets)
+            (_, maxTargetIndex) = max(actorTargets, 1)
+            (_, maxOutputIndex) = max(actorOutputs, 1)
+
+            if maxTargetIndex.item() == maxOutputIndex.item():
+                successByClasses += actorTargets
+            allByClasses += actorTargets
+
             actorLoss = creterion(actorOutputs, actorTargets)
             actorLoss.backward()
             optimizer.step()
             epochLoss += actorLoss.item()
             batchLoss += actorLoss.item()
-        if i % 200 == 0:  # print every 200 mini-batches
+        if i % 1000 == 0 and i != 0:  # print every 200 mini-batches
             print('[%d, %5d] mini-batch Actor avr loss: %.7f' %
-                  (epoch, i, batchLoss / 200))
+                  (epoch, i, batchLoss / 1000))
             # print('[{0:6.3f}, {1:6.3f}] mini-batch actor avr loss: {2:6.3f}; mini-batch critic avr loss: {3:6.3f}'.format(epoch, i, ))
-            actorBatchLoss = 0.0
-            batch_loss = 0.0
+            # actorBatchLoss = 0.0
+            batchLoss = 0.0
     save({
         'epoch': epoch,
         'state_dict': netActor.state_dict(),
@@ -66,5 +78,10 @@ for epoch in range(start_epoch, stopEpochNumber):
     }, check_point_file)
 
     print('Ошибка эпохи: {}, Уменьшение ошибки эпохи: {}'.format(epochLoss, previousActorEpochLoss - epochLoss))
+    success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
+    print('Success by classes: ', ['{0:6.3f}'.format(x) for x in success])
+
+    successByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=device)
+    allByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=device)
 
     previousActorEpochLoss = epochLoss
