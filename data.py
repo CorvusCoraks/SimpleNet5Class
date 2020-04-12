@@ -101,7 +101,8 @@ class FiveClassDataset(Dataset):
 
 class TrainDataset(FiveClassDataset):
     def __init__(self):
-        super(TrainDataset, self).__init__([500, 1000, 2000, 1000, 500])
+        # super(TrainDataset, self).__init__([500, 1000, 2000, 1000, 500])
+        super(TrainDataset, self).__init__([1000, 1000, 1000, 1000, 1000])
 
 
 class TestDataset(FiveClassDataset):
