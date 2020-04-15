@@ -101,8 +101,14 @@ class FiveClassDataset(Dataset):
 
 class TrainDataset(FiveClassDataset):
     def __init__(self):
+        self.__trainList = [1000, 1000, 1000, 1000, 1000]
         # super(TrainDataset, self).__init__([500, 1000, 2000, 1000, 500])
         super(TrainDataset, self).__init__([1000, 1000, 1000, 1000, 1000])
+
+    def getTrainDataCount(self):
+        count = 0
+        for value in self.__trainList: count += value
+        return value
 
 
 class TestDataset(FiveClassDataset):

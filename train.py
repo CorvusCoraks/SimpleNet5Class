@@ -74,12 +74,19 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
     previousActorEpochLoss = 1000.0
 
+    # количество правильных попаданий в класс за эпоху
     successByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
+    # количество попаданий в каждый класс за эпоху (независимо от правильности)
     allByClasses = tensor([[0.001, 0.001, 0.001, 0.001, 0.001]], device=calc_device)
+    # количество ошибочных попаданий в каждый класс (за эпоху)
     errorByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
-    outputByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
+    # outputByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
 
     deltaV: float = 0.
+
+    investigationEpoch = False
+    # investigationAction = False
+    td_zero.EnvironmentSearch()
 
     # Необходимо создать этот тензор ВНЕ основного цикла, хотябы ввиде бутафории
     # criticInputs: tensor = tensor([[0]], requares_grad=True)
@@ -87,10 +94,13 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
         i = 0
+        print("Investigate Epoch: ", investigationEpoch)
         # почему-то при использовинии такого варианта, счётчик всегда равен нулю.
         for i, (actorInputs, actorTargets) in enumerate(trainloader, 0):
             actorOptimizer.zero_grad()
             criticOptimizer.zero_grad()
+            td_zero.EnvironmentSearch.AccumulToNone(i, investigationEpoch, trainset.getTrainDataCount())
+            td_zero.EnvironmentSearch.setInvestigation(investigationEpoch)
             # criticInputs.zero
             if calc_device.type == 'cuda':
                 actorInputs, actorTargets = actorInputs.to(calc_device), actorTargets.to(calc_device)
@@ -99,11 +109,17 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
             # print('Actor Outputs: ', actorOutputs)
             # print('Actor Targets: ', actorTargets)
 
-            rf = reinf.getReinforcement(actorOutputs,actorTargets)
+            if td_zero.EnvironmentSearch.isInvestigation:
+                # если проход исследовательский
+                (actorOutputs, _) = td_zero.EnvironmentSearch.generate(actorOutputs.device)
+
+            rf = reinf.getReinforcement(actorOutputs, actorTargets)
             actorInputsList = actorInputs[0].tolist()
             actorInputsList.append(rf)
+
             criticInputs = tools.expandTensor(actorOutputs, actorInputsList)
             criticOutputs = netCritic(criticInputs)
+
             # Если это первый проход, то просто запоминаем предполагаемую величину ценнтости
             # Оптимизация проводится со второго прохода
             if td.getPreviousValue() is None:
@@ -112,6 +128,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 previousValue = td.getPreviousValue()
                 TDTarget = td.getTD(rf, criticOutputs)
                 Vt = previousValue
+                td_zero.EnvironmentSearch.dataAccumulation(i, investigationEpoch, TDTarget,previousValue)
                 # criticLoss = criticCreterion(previousValue, td.getTD(rf, criticOutputs))
                 # ---
                 # criticLoss = td_zero.AnyLoss.Qmaximization(previousValue, td.getTD(rf, criticOutputs))
@@ -120,21 +137,22 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 # ---
                 criticLoss.backward()
                 criticOptimizer.step()
-                actorOptimizer.step()
+                if not td_zero.EnvironmentSearch.isInvestigation:
+                    actorOptimizer.step()
+                    #investigationEpoch = True
 
                 # for name, module in netActor.named_modules():
                 #     if name == '_ActorNet__h0Linear':
                 #         print(module.weight[0])
 
-
             (_, maxTargetIndex) = max(actorTargets, 1)
             (_, maxOutputIndex) = max(actorOutputs, 1)
 
-            outputByClasses[0, maxOutputIndex.item()] += 1
+            # outputByClasses[0, maxOutputIndex.item()] += 1
             if maxTargetIndex.item() == maxOutputIndex.item():
                 successByClasses += actorTargets
             else:
-                errorByClasses[0, maxTargetIndex.item()] += 1
+                errorByClasses[0, maxOutputIndex.item()] += 1
             allByClasses += actorTargets
 
             # success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
@@ -175,10 +193,13 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 'state_dict': netCritic.state_dict(),
                 'optimizer': criticOptimizer.state_dict(),
             }, criticCheckPointFile)
-
+        # Чередуем исследовательские и неисследовательские эпохи
+        investigationEpoch = True if investigationEpoch == False else False
         print('Ошибка эпохи: {}, Уменьшение ошибки эпохи: {}'.format(actorEpochLoss, previousActorEpochLoss - actorEpochLoss))
         success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
-        print('Success by classes: ', ['{0:6.4f}'.format(x) for x in success])
+        print('Epoch Success by classes: ', ['{0:6.4f}'.format(x) for x in success])
+        fail = [errorByClasses[0, i] / allByClasses[0, i] for i in range(errorByClasses[0].size()[0])]
+        print('Epoch Fail by classes: ', ['{0:6.4f}'.format(x) for x in fail])
         # error = [errorByClasses[0, i] / allByClasses[0, i] for i in range(errorByClasses[0].size()[0])]
         # print('Error by classes: ', ['{0:6.3f}'.format(x) for x in error])
 
@@ -189,6 +210,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
         successByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
         allByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
+        errorByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
 
         previousActorEpochLoss = actorEpochLoss
 
