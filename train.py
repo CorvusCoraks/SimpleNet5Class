@@ -84,23 +84,24 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
     deltaV: float = 0.
 
-    investigationEpoch = False
+    # investigationEpoch = False
     # investigationAction = False
     td_zero.EnvironmentSearch()
 
     # Необходимо создать этот тензор ВНЕ основного цикла, хотябы ввиде бутафории
     # criticInputs: tensor = tensor([[0]], requares_grad=True)
     for epoch in range(start_epoch, stopEpochNumber):
+        td_zero.EnvironmentSearch.AccumulToNone(trainset.getTrainDataCount())
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
         i = 0
-        print("Investigate Epoch: ", investigationEpoch)
+        print("Investigate Epoch: ", td_zero.EnvironmentSearch.isCuriosityEpoch())
         # почему-то при использовинии такого варианта, счётчик всегда равен нулю.
         for i, (actorInputs, actorTargets) in enumerate(trainloader, 0):
             actorOptimizer.zero_grad()
             criticOptimizer.zero_grad()
-            td_zero.EnvironmentSearch.AccumulToNone(i, investigationEpoch, trainset.getTrainDataCount())
-            td_zero.EnvironmentSearch.setInvestigation(investigationEpoch)
+            # td_zero.EnvironmentSearch.AccumulToNone(i, investigationEpoch, trainset.getTrainDataCount())
+            td_zero.EnvironmentSearch.setInvestigation(td_zero.EnvironmentSearch.isCuriosityEpoch())
             # criticInputs.zero
             if calc_device.type == 'cuda':
                 actorInputs, actorTargets = actorInputs.to(calc_device), actorTargets.to(calc_device)
@@ -128,7 +129,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 previousValue = td.getPreviousValue()
                 TDTarget = td.getTD(rf, criticOutputs)
                 Vt = previousValue
-                td_zero.EnvironmentSearch.dataAccumulation(i, investigationEpoch, TDTarget,previousValue)
+                td_zero.EnvironmentSearch.dataAccumulation(i, td_zero.EnvironmentSearch.isCuriosityEpoch(), TDTarget,previousValue)
                 # criticLoss = criticCreterion(previousValue, td.getTD(rf, criticOutputs))
                 # ---
                 # criticLoss = td_zero.AnyLoss.Qmaximization(previousValue, td.getTD(rf, criticOutputs))
@@ -194,7 +195,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 'optimizer': criticOptimizer.state_dict(),
             }, criticCheckPointFile)
         # Чередуем исследовательские и неисследовательские эпохи
-        investigationEpoch = True if investigationEpoch == False else False
+        # investigationEpoch = True if investigationEpoch == False else False
         print('Ошибка эпохи: {}, Уменьшение ошибки эпохи: {}'.format(actorEpochLoss, previousActorEpochLoss - actorEpochLoss))
         success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
         print('Epoch Success by classes: ', ['{0:6.4f}'.format(x) for x in success])
