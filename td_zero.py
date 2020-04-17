@@ -120,22 +120,94 @@ class EnvironmentSearch():
     # - в зависимости от isInvestigation производится опримизация актора (в случае исследовательского прохода,
     # оптимизация не требуется).
     #
-    # TD-target накопленное за эпоху обучения, для использования в эпоху исследований
-    TD_cumul: tensor
-    # накопленное за эпоху обучения значение Qt+1, для использования в эпоху исследований
-    Qpr_cumul: tensor
-    # Флаг, показывающий, является ли текущий батч исследовательским
-    isInvestigation: bool = False
-    # вероятность того, что текущий батч будет исследовательским
-    investigationProbability = 0.
+    class NumMap():
+        # последовательности эпох в цифровом виде. Элемент 0 - обучение, элемент 1 - исследование. Зациклено.
+        # Фундаментальная карта. Эра, включающая в себя множество эпох. Когда в плане ниже, число исследовательских
+        # эпох становится равным нулю, нижний план заменяется на этот, зацикливая процесс
+        # Эра - последовательсность последовательность изменяющихся (внутренне перебаллансируемых) периодов
+        # Период - набор эпох с внутренне нестабильным порядком типов эпох. Несколько периодов составляют Эру.
+        baseMap = [1, 32]
+        STUDY = 0
+        CURIOSITY = 1
+        # Тип текущей эпохи
+        epochType = STUDY
 
-    # Карта последовательных батчей: stady, curiosity, curiosity, ... Карта зациклена с последнего на первый эелемент
-    epochMap = ['s', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c']
+        def __init__(self):
+            # План эпох уровнем выше. После полного прохода нижнего плана, у этого плана учебные эпохи +1,
+            # а исследовательские эпохи -1 (с целью переноса центра тяжести с исследования на обучение).
+            # Далее, этот план копируется в нижний
+            self.__epochMapNum = EnvironmentSearch.NumMap.baseMap.copy()
+            # Рабочий план эпох. В процессе прохождения по циклу эпох, цифры в плане уменьшаются на 1. Когда элемент
+            # становится равным нулю, происходит переход к следующему, и от последнего к первому
+            self.__epochCounter = self.__epochMapNum.copy()
+
+        def __setNextEra(self):
+            """
+            Переход к следующей эре.
+
+            :return:
+            """
+            if self.__epochMapNum[EnvironmentSearch.NumMap.CURIOSITY] == 1:
+                # Получаем сигнал, что очередная эра закончена и надо переходить к новой
+                self.__epochMapNum = EnvironmentSearch.NumMap.baseMap.copy()
+
+        def __changeEpochBalance(self):
+            """
+            Перебаллансировка типов эпох и начало нового периода.
+
+            :return:
+            """
+            #
+            # Перебаллансировка, это - увеличение числа обучающих эпох и уменьшение исследовательских эпох
+            #
+            if self.__epochCounter[EnvironmentSearch.NumMap.CURIOSITY] == 0:
+                # Текущий период завершён
+                if self.__epochMapNum[EnvironmentSearch.NumMap.CURIOSITY] == 1:
+                    # Текущая эра завершена
+                    self.__setNextEra()
+                else:
+                    # Производим перебаллансировку
+                    self.__epochMapNum[EnvironmentSearch.NumMap.STUDY] += 1
+                    self.__epochMapNum[EnvironmentSearch.NumMap.CURIOSITY] -= 1
+
+        def setNextEpochType(self):
+            # Обходим лист плана эпох
+            if self.__epochCounter[EnvironmentSearch.NumMap.STUDY] == 0:
+                # Если последовательность обучающих эпох пройдена
+                if self.__epochCounter[EnvironmentSearch.NumMap.CURIOSITY] == 0:
+                    self.__changeEpochBalance()
+                    # Если последовательность исследовательских эпох пройдена
+                    # Восстанавливаем изменяемый список
+                    self.__epochCounter = self.__epochMapNum.copy()
+                    # И объявляем эпоху обучающей
+                    self.__epochCounter[EnvironmentSearch.NumMap.STUDY] -= 1
+                    EnvironmentSearch.NumMap.epochType = EnvironmentSearch.NumMap.STUDY
+                else:
+                    # В противном случае, эпоха опять исследовательская
+                    self.__epochCounter[EnvironmentSearch.NumMap.CURIOSITY] -= 1
+                    EnvironmentSearch.NumMap.epochType = EnvironmentSearch.NumMap.CURIOSITY
+            else:
+                self.__epochCounter[EnvironmentSearch.NumMap.STUDY] -= 1
+                EnvironmentSearch.NumMap.epochType = EnvironmentSearch.NumMap.STUDY
+
+    def __init__(self):
+        # TD-target накопленное за эпоху обучения, для использования в эпоху исследований
+        self.__TD_cumul: tensor = None
+        # накопленное за эпоху обучения значение Qt+1, для использования в эпоху исследований
+        self.__Qpr_cumul: tensor = None
+        # Флаг, показывающий, является ли текущий батч исследовательским
+        self.isInvestigation: bool = False
+        # вероятность того, что текущий батч будет исследовательским
+        self.__investigationProbability = 0.
+
+        self.__epochMap = EnvironmentSearch.NumMap()
+
+    # Карта последовательных эпох: stady, curiosity, curiosity, ... Карта зациклена с последнего на первый эелемент
+    # epochMap = ['s', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c']
     # Указатель внутри карты батчей
-    pointer = len(epochMap) - 1
+    # pointer = len(epochMap) - 1
 
-    @classmethod
-    def probability(cls, batchCount: int):
+    def __probability(self, batchCount: int):
         """
         Возвращает вероятность исследовательского прохода (батча)
 
@@ -146,7 +218,7 @@ class EnvironmentSearch():
         # Функия явлеется целиком моей выдумкой. Основная цель, чтобы данная вероятность уменьшалась по мере
         # роста точности аппроксимации функции ценности.
         # Средняя разность целевой функции ценности и предсказанной на предыдущих батчах в рамках эпохи
-        deltaMedium = div(sub(EnvironmentSearch.TD_cumul, EnvironmentSearch.Qpr_cumul),batchCount)
+        deltaMedium = div(sub(self.__TD_cumul, self.__Qpr_cumul),batchCount)
         # корень квадратный из квадрата средней разницы (чтоб убрать знак разницы и перейти к модулю)
         delta = sqrt(mm(deltaMedium, deltaMedium))
         # Нижеследующее является подгонкой. Чтобы в самом начале обучения, вероятность была не больше, но чуть
@@ -156,29 +228,27 @@ class EnvironmentSearch():
         else:
             return delta.item() / 5
 
-    @classmethod
-    def setInvestigation(cls, investEpoch: bool):
+    def setInvestigation(self, investEpoch: bool):
         """
         Будет ли производится ли на данном проходе (батче) исследование в рамках исследовательскойэпохи.
 
         :param investEpoch: данная эпоха исследовательская?
         """
         # Во входных данных вполне могут оказаться None
-        if EnvironmentSearch.TD_cumul is None or EnvironmentSearch.Qpr_cumul is None:
-            EnvironmentSearch.isInvestigation = False
+        if self.__TD_cumul is None or self.__Qpr_cumul is None:
+            self.isInvestigation = False
             return
 
         if investEpoch:
             # Устанавливаем, будет ли данный батч в рамках исследовательской эпохи исследовательским
             randomNumber = random.uniform(0, 1)
-            if randomNumber <= EnvironmentSearch.investigationProbability:
-                EnvironmentSearch.isInvestigation = True
+            if randomNumber <= self.__investigationProbability:
+                self.isInvestigation = True
                 return
 
-        EnvironmentSearch.isInvestigation = False
+        self.isInvestigation = False
 
-    @classmethod
-    def dataAccumulation(cls, forward: int, investEpoch: bool, TD_target: tensor, Qprevious: tensor):
+    def dataAccumulation(self, forward: int, investEpoch: bool, TD_target: tensor, Qprevious: tensor):
         """
         Аккумулирование данных в неисследовательскую эпоху.
 
@@ -189,18 +259,17 @@ class EnvironmentSearch():
         """
         if not investEpoch:
             # Во время эпохи без исследований, производим аккумулирование данных для эпохи исследований
-            if EnvironmentSearch.TD_cumul is None:
-                EnvironmentSearch.TD_cumul = TD_target
+            if self.__TD_cumul is None:
+                self.__TD_cumul = TD_target
             else:
-                EnvironmentSearch.TD_cumul += TD_target
+                self.__TD_cumul += TD_target
 
-            if EnvironmentSearch.Qpr_cumul is None:
-                EnvironmentSearch.Qpr_cumul = Qprevious
+            if self.__Qpr_cumul is None:
+                self.__Qpr_cumul = Qprevious
             else:
-                EnvironmentSearch.Qpr_cumul += Qprevious
+                self.__Qpr_cumul += Qprevious
 
-    @classmethod
-    def generate(cls, calc_device: device):
+    def generate(self, calc_device: device):
         """
         Возвращает сгенерированный выход актора для исследовательского прохода по критику
 
@@ -222,40 +291,41 @@ class EnvironmentSearch():
 
         return tensor([result], device=calc_device, dtype=float), tensor([target], device=calc_device, dtype=float)
 
-    @classmethod
-    def AccumulToNone(cls, batchCountinEpoch: int):
+    def accumulToNone(self, batchCountinEpoch: int):
         """
-        Собранные данные превращаются в None на нулевом проходе неисследовательской эпохи
+        Собранные данные превращаются в None на нулевом проходе обучающей эпохи
 
         :param forward:
         :return:
         """
-        # Переводим указатель карты эпох к следующей
-        if EnvironmentSearch.pointer == len(EnvironmentSearch.epochMap) - 1:
-            EnvironmentSearch.pointer = 0
-        else:
-            EnvironmentSearch.pointer += 1
+        self.__epochMap.setNextEpochType()
+
+        # print('EpochPhase: ', self.)
 
         # Устанавливаем начальные значения эпохи
-        if EnvironmentSearch.isCuriosityEpoch():
-            EnvironmentSearch.investigationProbability = EnvironmentSearch.probability(batchCountinEpoch)
-            print('Probability: ', EnvironmentSearch.investigationProbability)
+        if self.isCuriosityEpoch():
+            self.__investigationProbability = self.__probability(batchCountinEpoch)
+            print('Probability: ', self.__investigationProbability)
         else:
-            EnvironmentSearch.TD_cumul = None
-            EnvironmentSearch.Qpr_cumul = None
-            EnvironmentSearch.isInvestigation = False
-            EnvironmentSearch.investigationProbability = 0.
+            self.__TD_cumul = None
+            self.__Qpr_cumul = None
+            self.isInvestigation = False
+            self.__investigationProbability = 0.
 
-    @classmethod
-    def isCuriosityEpoch(cls):
+    def isCuriosityEpoch(self):
         """
-        Устанавливает, является ли текущая эпоха исследовательской
+        Выясняет, является ли текущая эпоха исследовательской
 
         :return:
         """
 
-        if EnvironmentSearch.epochMap[EnvironmentSearch.pointer] == 's':
-            return False
-        else:
+        # if EnvironmentSearch.epochMap[EnvironmentSearch.pointer] == 's':
+        #     return False
+        # else:
+        #     return True
+
+        if EnvironmentSearch.NumMap.epochType == EnvironmentSearch.NumMap.CURIOSITY:
             return True
+        else:
+            return False
 

@@ -39,10 +39,12 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         netActor.to(calc_device)
         netCritic.to(calc_device)
 
+    envSearch = td_zero.EnvironmentSearch()
     start_epoch = 0
     # Если существует файл с сохранённым состоянием нейронной сети, то загружаем параметры сети и тренировки из него
     if os.path.exists(actorCheckPointFile):
         checkpoint = load(actorCheckPointFile)
+        envSearch = checkpoint['environmentResearch']
         # продолжаем обучение со следующей эпохи
         start_epoch = checkpoint['epoch'] + 1
         netActor.load_state_dict(checkpoint['state_dict'])
@@ -86,22 +88,22 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
     # investigationEpoch = False
     # investigationAction = False
-    td_zero.EnvironmentSearch()
+
 
     # Необходимо создать этот тензор ВНЕ основного цикла, хотябы ввиде бутафории
     # criticInputs: tensor = tensor([[0]], requares_grad=True)
     for epoch in range(start_epoch, stopEpochNumber):
-        td_zero.EnvironmentSearch.AccumulToNone(trainset.getTrainDataCount())
+        envSearch.accumulToNone(trainset.getTrainDataCount())
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
         i = 0
-        print("Investigate Epoch: ", td_zero.EnvironmentSearch.isCuriosityEpoch())
+        print("Investigate Epoch: ", envSearch.isCuriosityEpoch())
         # почему-то при использовинии такого варианта, счётчик всегда равен нулю.
         for i, (actorInputs, actorTargets) in enumerate(trainloader, 0):
             actorOptimizer.zero_grad()
             criticOptimizer.zero_grad()
             # td_zero.EnvironmentSearch.AccumulToNone(i, investigationEpoch, trainset.getTrainDataCount())
-            td_zero.EnvironmentSearch.setInvestigation(td_zero.EnvironmentSearch.isCuriosityEpoch())
+            envSearch.setInvestigation(envSearch.isCuriosityEpoch())
             # criticInputs.zero
             if calc_device.type == 'cuda':
                 actorInputs, actorTargets = actorInputs.to(calc_device), actorTargets.to(calc_device)
@@ -110,9 +112,9 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
             # print('Actor Outputs: ', actorOutputs)
             # print('Actor Targets: ', actorTargets)
 
-            if td_zero.EnvironmentSearch.isInvestigation:
+            if envSearch.isInvestigation:
                 # если проход исследовательский
-                (actorOutputs, _) = td_zero.EnvironmentSearch.generate(actorOutputs.device)
+                (actorOutputs, _) = envSearch.generate(actorOutputs.device)
 
             rf = reinf.getReinforcement(actorOutputs, actorTargets)
             actorInputsList = actorInputs[0].tolist()
@@ -129,7 +131,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 previousValue = td.getPreviousValue()
                 TDTarget = td.getTD(rf, criticOutputs)
                 Vt = previousValue
-                td_zero.EnvironmentSearch.dataAccumulation(i, td_zero.EnvironmentSearch.isCuriosityEpoch(), TDTarget,previousValue)
+                envSearch.dataAccumulation(i, envSearch.isCuriosityEpoch(), TDTarget,previousValue)
                 # criticLoss = criticCreterion(previousValue, td.getTD(rf, criticOutputs))
                 # ---
                 # criticLoss = td_zero.AnyLoss.Qmaximization(previousValue, td.getTD(rf, criticOutputs))
@@ -138,7 +140,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 # ---
                 criticLoss.backward()
                 criticOptimizer.step()
-                if not td_zero.EnvironmentSearch.isInvestigation:
+                if not envSearch.isInvestigation:
                     actorOptimizer.step()
                     #investigationEpoch = True
 
@@ -181,6 +183,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 os.replace(actorCheckPointFile, actorCheckPointFile + '.bak')
 
             save({
+                'environmentResearch': envSearch,
                 'epoch': epoch,
                 'state_dict': netActor.state_dict(),
                 'optimizer': actorOptimizer.state_dict(),
