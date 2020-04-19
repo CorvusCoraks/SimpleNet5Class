@@ -46,14 +46,16 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         checkpoint = load(actorCheckPointFile)
         envSearch = checkpoint['environmentResearch']
         # продолжаем обучение со следующей эпохи
-        start_epoch = checkpoint['epoch'] + 1
+        # start_epoch = checkpoint['epoch'] + 1
+        start_epoch = checkpoint['epoch']
         netActor.load_state_dict(checkpoint['state_dict'])
         actorOptimizer.load_state_dict(checkpoint['optimizer'])
 
     if os.path.exists(criticCheckPointFile):
         checkpoint = load(criticCheckPointFile)
         # продолжаем обучение со следующей эпохи
-        start_epoch = checkpoint['epoch'] + 1
+        # start_epoch = checkpoint['epoch'] + 1
+        start_epoch = checkpoint['epoch']
         netCritic.load_state_dict(checkpoint['state_dict'])
         criticOptimizer.load_state_dict(checkpoint['optimizer'])
         # net.eval()
@@ -84,16 +86,18 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     errorByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
     # outputByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
 
+    # изменили структуру Эры в процессе обучения сети
+    # envSearch._EnvironmentSearch__epochMap.baseMap = [1, 24]
     deltaV: float = 0.
 
     # investigationEpoch = False
     # investigationAction = False
 
-
     # Необходимо создать этот тензор ВНЕ основного цикла, хотябы ввиде бутафории
     # criticInputs: tensor = tensor([[0]], requares_grad=True)
     for epoch in range(start_epoch, stopEpochNumber):
         envSearch.accumulToNone(trainset.getTrainDataCount())
+        envSearch._EnvironmentSearch__epochMap.printMaps()
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
         i = 0
@@ -118,7 +122,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
             rf = reinf.getReinforcement(actorOutputs, actorTargets)
             actorInputsList = actorInputs[0].tolist()
-            actorInputsList.append(rf)
+            # actorInputsList.append(rf)
 
             criticInputs = tools.expandTensor(actorOutputs, actorInputsList)
             criticOutputs = netCritic(criticInputs)

@@ -41,7 +41,7 @@ class CriticNet(nn.Module):
         """
         super(CriticNet, self).__init__()
 
-        self.__inputFeatures = 10+5+1
+        self.__inputFeatures = 10+5
         self.__outputFeatures = 1
 
         self.__inNeuron = nn.Sigmoid()
@@ -53,8 +53,10 @@ class CriticNet(nn.Module):
         self.__h1Dropout = nn.Dropout(0.1)
         # self.__h2Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
         # self.__h2Neuron = nn.Sigmoid()
+        # self.__h2Dropout = nn.Dropout(0.1)
         self.__outLinear = nn.Linear(self.__inputFeatures, self.__outputFeatures, bias=False)
-        self.__outNeuron = nn.Sigmoid()
+        # self.__outNeuron = nn.Sigmoid()
+        self.__outNeuron = nn.Tanh()
 
         if initWaights:
             self.__initializeWeights()
@@ -74,6 +76,7 @@ class CriticNet(nn.Module):
         x = self.__h1Dropout(x)
         # x = self.__h2Linear(x)
         # x = self.__h2Neuron(x)
+        # x = self.__h2Dropout(x)
         x = self.__outLinear(x)
         x = self.__outNeuron(x)
 

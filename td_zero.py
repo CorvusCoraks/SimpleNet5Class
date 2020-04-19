@@ -22,7 +22,18 @@ class TD_zero():
         :rtype tensor:
         """
         previousValue = 0 if TDTargetOnly else self.__valuePrevious
-        result = reinforcement + self.__gamma * value_est - previousValue
+        # если максимальное возможное подкрепление больше 1, то результат будет тоже больше единицы.
+        # ВЫход сигмоиды не может быть
+        # больше 1, а значит такой вариант ошибочен. Необходимо, чтобы сумма t+1 подкрепления и t+1 оценки функции
+        # ценности ДОЛЖНЫ быть меньше единицы (так как фактически сравнивается с выходом критика).
+        # Так же, при нулевом t+1 подкрелении, t+1 оценка функции ценности
+        # сама по себе должна быть меньше единицы.
+        #
+        # Если установить, что выход критика это - 1/10 реальной функции ценности, то сумма t+1 подкрепления и
+        # t+1 оценки функции ценности, для сравнения с выходом ктитика, тоже должна быть поделена на десять.
+        # Следовательно. На практике, в формуле, нужно сравнивать сумму 1/10 подкрепления t+1 и t+1 выхода критика
+        # с выходом ктитика t.
+        result = reinforcement / 10 + self.__gamma * value_est - previousValue
 
         # обновляем значение
         self.__valuePrevious = value_est
@@ -44,9 +55,9 @@ class Reinforcement():
     """
     def __init__(self):
         # Подкрепление в случае удачного угадывания класса
-        self.__reinforcementByClass = [5., 5., 5., 5., 5.]
+        self.__reinforcementByClass = [5., 0., 5., 5., 5.]
         # Наказание, если актор выбрал этот класс ошибочно
-        self.__punishmentByClass = [-0.005, -0.005, -0.005, -0.005, -0.005]
+        self.__punishmentByClass = [0., 5., 0., 0., 0.]
 
     def getReinforcement(self, outputs: tensor, targets: tensor):
         """
@@ -126,7 +137,9 @@ class EnvironmentSearch():
         # эпох становится равным нулю, нижний план заменяется на этот, зацикливая процесс
         # Эра - последовательсность последовательность изменяющихся (внутренне перебаллансируемых) периодов
         # Период - набор эпох с внутренне нестабильным порядком типов эпох. Несколько периодов составляют Эру.
-        baseMap = [1, 32]
+        #
+        # 25 легче отслеживать в терминале
+        baseMap = [1, 24]
         STUDY = 0
         CURIOSITY = 1
         # Тип текущей эпохи
@@ -140,6 +153,11 @@ class EnvironmentSearch():
             # Рабочий план эпох. В процессе прохождения по циклу эпох, цифры в плане уменьшаются на 1. Когда элемент
             # становится равным нулю, происходит переход к следующему, и от последнего к первому
             self.__epochCounter = self.__epochMapNum.copy()
+
+        def printMaps(self):
+            print('Base Map: ', self.baseMap)
+            print('Epoch Num Map: ', self.__epochMapNum)
+            print('Epoch Counter: ', self.__epochCounter)
 
         def __setNextEra(self):
             """
@@ -305,6 +323,7 @@ class EnvironmentSearch():
         # Устанавливаем начальные значения эпохи
         if self.isCuriosityEpoch():
             self.__investigationProbability = self.__probability(batchCountinEpoch)
+            # print('************************* STUDY epoch. ******************************')
             print('Probability: ', self.__investigationProbability)
         else:
             self.__TD_cumul = None
