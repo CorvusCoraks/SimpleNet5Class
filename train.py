@@ -26,7 +26,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     netActor = net.ActorNet(True)
     netCritic = net.CriticNet(True)
 
-    learningRate = 0.0000001
+    learningRate = 0.000001
     stopEpochNumber = 100000
 
     actorCreterion = nn.MSELoss()
@@ -50,6 +50,8 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         start_epoch = checkpoint['epoch']
         netActor.load_state_dict(checkpoint['state_dict'])
         actorOptimizer.load_state_dict(checkpoint['optimizer'])
+        if actorOptimizer.param_groups[0]['lr'] != learningRate:
+            actorOptimizer.param_groups[0]['lr'] = learningRate
 
     if os.path.exists(criticCheckPointFile):
         checkpoint = load(criticCheckPointFile)
@@ -58,6 +60,8 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         start_epoch = checkpoint['epoch']
         netCritic.load_state_dict(checkpoint['state_dict'])
         criticOptimizer.load_state_dict(checkpoint['optimizer'])
+        if criticOptimizer.param_groups[0]['lr'] != learningRate:
+            criticOptimizer.param_groups[0]['lr'] = learningRate
         # net.eval()
 
     netActor.train()
@@ -73,7 +77,8 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     for name, module in netActor.named_modules():
         if name == '_ActorNet__h0Linear':
             print('Actor first hidden layer weights:\n', module.weight[0])
-            break
+        elif name == '_ActorNet__outLinear':
+            print('Actor out layer weights:\n', module.weight, '\n---')
     # print(netActor.modules())
 
     previousActorEpochLoss = 1000.0
@@ -98,6 +103,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     for epoch in range(start_epoch, stopEpochNumber):
         envSearch.accumulToNone(trainset.getTrainDataCount())
         envSearch._EnvironmentSearch__epochMap.printMaps()
+        print('Critic Learning Rate: ', criticOptimizer.param_groups[0]['lr'])
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
         i = 0
@@ -177,8 +183,8 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
             actorEpochLoss += actorLoss.item()
             actorBatchLoss += actorLoss.item()
             if (i+1) % 1000 == 0:  # print every 200 mini-batches
-                print('[%d, %5d] mini-batch Actor avr loss: %.7f, TD target: %.7f, Value t: %.7f' %
-                      (epoch, i+1, actorBatchLoss / 1000, TDTarget, Vt))
+                print('[%d, %5d] mini-batch Actor avr loss: %.7f, TD target: %.7f, Value t: %.7f, criticLoss: %.7f' %
+                      (epoch, i+1, actorBatchLoss / 1000, TDTarget, Vt, criticLoss))
                 # print('[{0:6.3f}, {1:6.3f}] mini-batch actor avr loss: {2:6.3f}; mini-batch critic avr loss: {3:6.3f}'.format(epoch, i, ))
                 # actorBatchLoss = 0.0
                 actorBatchLoss = 0.0
@@ -214,7 +220,8 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         for name, module in netActor.named_modules():
             if name == '_ActorNet__h0Linear':
                 print('Actor first hidden layer weights:\n', module.weight[0], '\n---')
-                break
+            elif name == '_ActorNet__outLinear':
+                print('Actor out layer weights:\n', module.weight, '\n---')
 
         successByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
         allByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)

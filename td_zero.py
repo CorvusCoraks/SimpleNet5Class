@@ -55,9 +55,9 @@ class Reinforcement():
     """
     def __init__(self):
         # Подкрепление в случае удачного угадывания класса
-        self.__reinforcementByClass = [5., 0., 5., 5., 5.]
+        self.__reinforcementByClass = [5., 5., 5., 5., 5.]
         # Наказание, если актор выбрал этот класс ошибочно
-        self.__punishmentByClass = [0., 5., 0., 0., 0.]
+        self.__punishmentByClass = [-0.5, -0.5, -0.5, -0.5, -0.5]
 
     def getReinforcement(self, outputs: tensor, targets: tensor):
         """
@@ -100,12 +100,13 @@ class AnyLoss():
 
         :param input: Предыдущее значение функции ценности
         :param target: TD-target
-        :return:
+        :return: tensor [[scalar]]
+        :rtype tensor:
         """
         # Добавлен обратная экспонента функции ценности. Цель - минимизация данного компонента должна вести
         # к максимизации функции ценности. Функция ценности умножена на число, призванное сделать обратную экспоненту
         # "покруче", т. е. не такой пологой, в диапазоне выхода сигмоиды
-        return mm(sub(target, input), sub(target, input)) + inverse(exp(input * 0.1))
+        return mm(sub(target, input), sub(target, input)) + inverse(exp(sub(input, 3)))
 
 
 class EnvironmentSearch():
@@ -139,7 +140,7 @@ class EnvironmentSearch():
         # Период - набор эпох с внутренне нестабильным порядком типов эпох. Несколько периодов составляют Эру.
         #
         # 25 легче отслеживать в терминале
-        baseMap = [1, 24]
+        baseMap = [1, 49]
         STUDY = 0
         CURIOSITY = 1
         # Тип текущей эпохи
@@ -241,10 +242,12 @@ class EnvironmentSearch():
         delta = sqrt(mm(deltaMedium, deltaMedium))
         # Нижеследующее является подгонкой. Чтобы в самом начале обучения, вероятность была не больше, но чуть
         # меньше единицы
-        if delta.item() / 5 >= 0.95:
-            return 0.95
-        else:
-            return delta.item() / 5
+        # if delta.item() * 10 >= 0.95:
+        #     return 0.95
+        # else:
+        #     return delta.item() * 10
+
+        return 0.95
 
     def setInvestigation(self, investEpoch: bool):
         """
@@ -313,12 +316,10 @@ class EnvironmentSearch():
         """
         Собранные данные превращаются в None на нулевом проходе обучающей эпохи
 
-        :param forward:
+        :param batchCountinEpoch: размер одного батча
         :return:
         """
         self.__epochMap.setNextEpochType()
-
-        # print('EpochPhase: ', self.)
 
         # Устанавливаем начальные значения эпохи
         if self.isCuriosityEpoch():

@@ -44,16 +44,29 @@ class CriticNet(nn.Module):
         self.__inputFeatures = 10+5
         self.__outputFeatures = 1
 
-        self.__inNeuron = nn.Sigmoid()
+        # self.__inNeuron = nn.Sigmoid()
+        self.__inNeuron = nn.Tanh()
+
         self.__h0Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
-        self.__h0Neuron = nn.Sigmoid()
-        self.__h0Dropout = nn.Dropout(0.1)
+        # self.__h0Neuron = nn.Sigmoid()
+        self.__h0Neuron = nn.Tanh()
+        # self.__h0Dropout = nn.Dropout(0.1)
+
         self.__h1Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
-        self.__h1Neuron = nn.Sigmoid()
-        self.__h1Dropout = nn.Dropout(0.1)
+        # self.__h1Neuron = nn.Sigmoid()
+        self.__h1Neuron = nn.Tanh()
+        # self.__h1Dropout = nn.Dropout(0.1)
+
         # self.__h2Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
-        # self.__h2Neuron = nn.Sigmoid()
+        # # self.__h2Neuron = nn.Sigmoid()
+        # self.__h2Neuron = nn.Tanh()
         # self.__h2Dropout = nn.Dropout(0.1)
+        #
+        # self.__h3Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
+        # # self.__h3Neuron = nn.Sigmoid()
+        # self.__h3Neuron = nn.Tanh()
+        # self.__h3Dropout = nn.Dropout(0.1)
+
         self.__outLinear = nn.Linear(self.__inputFeatures, self.__outputFeatures, bias=False)
         # self.__outNeuron = nn.Sigmoid()
         self.__outNeuron = nn.Tanh()
@@ -68,15 +81,23 @@ class CriticNet(nn.Module):
 
     def forward(self, x):
         x = self.__inNeuron(x)
+
         x = self.__h0Linear(x)
         x = self.__h0Neuron(x)
-        x = self.__h0Dropout(x)
+        # x = self.__h0Dropout(x)
+
         x = self.__h1Linear(x)
         x = self.__h1Neuron(x)
-        x = self.__h1Dropout(x)
+        # x = self.__h1Dropout(x)
+
         # x = self.__h2Linear(x)
         # x = self.__h2Neuron(x)
         # x = self.__h2Dropout(x)
+        #
+        # x = self.__h3Linear(x)
+        # x = self.__h3Neuron(x)
+        # x = self.__h3Dropout(x)
+
         x = self.__outLinear(x)
         x = self.__outNeuron(x)
 
