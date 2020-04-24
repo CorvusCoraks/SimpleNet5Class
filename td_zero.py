@@ -55,9 +55,9 @@ class Reinforcement():
     """
     def __init__(self):
         # Подкрепление в случае удачного угадывания класса
-        self.__reinforcementByClass = [5., 5., 5., 5., 5.]
+        self.__reinforcementByClass = [2., 2., 2., 2., 2.]
         # Наказание, если актор выбрал этот класс ошибочно
-        self.__punishmentByClass = [-0.5, -0.5, -0.5, -0.5, -0.5]
+        self.__punishmentByClass = [-2., -2., -2., -2., -2.]
 
     def getReinforcement(self, outputs: tensor, targets: tensor):
         """
@@ -71,8 +71,10 @@ class Reinforcement():
         (_, maxTargetIndex) = max(targets, 1)
         (_, maxOutputIndex) = max(outputs, 1)
         if maxTargetIndex.item() == maxOutputIndex.item():
+            # если действие актора правильное, т. е. совпадает с целью, то он по этому классу получает поощерение
             return tensor([[self.__reinforcementByClass[maxTargetIndex]]], dtype=float, device=outputs.device)
         else:
+            # если актор не правильно поступил, то по этому же классу он получает наказание (по правильному классу)
             return tensor([[self.__punishmentByClass[maxTargetIndex]]], dtype=float, device=outputs.device)
 
 
@@ -106,7 +108,7 @@ class AnyLoss():
         # Добавлен обратная экспонента функции ценности. Цель - минимизация данного компонента должна вести
         # к максимизации функции ценности. Функция ценности умножена на число, призванное сделать обратную экспоненту
         # "покруче", т. е. не такой пологой, в диапазоне выхода сигмоиды
-        return mm(sub(target, input), sub(target, input)) + inverse(exp(sub(input, 3)))
+        return mm(sub(target, input), sub(target, input)) + 0.001*inverse(exp(sub(input, 3)))
 
 
 class EnvironmentSearch():
@@ -140,7 +142,7 @@ class EnvironmentSearch():
         # Период - набор эпох с внутренне нестабильным порядком типов эпох. Несколько периодов составляют Эру.
         #
         # 25 легче отслеживать в терминале
-        baseMap = [1, 49]
+        baseMap = [1, 1]
         STUDY = 0
         CURIOSITY = 1
         # Тип текущей эпохи
@@ -269,11 +271,10 @@ class EnvironmentSearch():
 
         self.isInvestigation = False
 
-    def dataAccumulation(self, forward: int, investEpoch: bool, TD_target: tensor, Qprevious: tensor):
+    def dataAccumulation(self, investEpoch: bool, TD_target: tensor, Qprevious: tensor):
         """
         Аккумулирование данных в неисследовательскую эпоху.
 
-        :param forward: номер батча в рамках эпохи
         :param investEpoch: эпоха инвестиционная?
         :param TD_target:
         :param Qprevious:
@@ -348,4 +349,61 @@ class EnvironmentSearch():
             return True
         else:
             return False
+
+
+class InEpochResearch():
+    def __init__(self):
+        self.researchProbability: float = 0.
+        self.__isResearchBatch: bool = False
+
+    def __recalculate(self):
+        # probability = random.uniform(0, 1)
+        if random.uniform(0, 1) <= self.researchProbability:
+            self.__isResearchBatch = True
+        else:
+            self.__isResearchBatch = False
+
+    def isResearchBatch(self, researchProbability=2, recalculate=False):
+        """
+        Данный батч исследовательский?
+
+        :param researchProbability:
+        :param recalculate:
+        :return:
+        """
+        if researchProbability <= 1:
+            # если входная вероятность логична, то считаем её новой и пересчитываем состояние флага исследования
+            self.researchProbability = researchProbability
+            self.__recalculate()
+        elif recalculate == True:
+            # просто пересчитываем состояние флага на основе ранее сохранённой вероятности
+            self.__recalculate()
+
+        # возвращаем изменённое состояние после пересчёта, либо состояние старое, ранее сохранённое.
+        return self.__isResearchBatch
+
+
+
+    def generate(self, calc_device: device):
+        """
+        Возвращает сгенерированный выход актора для исследовательского прохода по критику
+
+        :param calc_device: на чём происходит обсчёт тензоров
+        :return: (сгенерированный случайный выход актора, соответствующий target актора) - тензоры [[...]]
+        :rtype: tensor
+        """
+        # индекс "правильного" класса
+        randomIndex = random.choice([0, 1, 2, 3, 4])
+        # граница, выше которой будет выход нейрона "правильного" класса, а ниже этой границы будут выходы
+        # неправильных классов
+        randomBorder = random.uniform(0.5, 0.95)
+        # Генерируем выходы ниже гранцы по всем классам
+        result = [random.uniform(0, randomBorder) for i in range(0, 5)]
+        # для "правильного" класса генерируем выход выше границы
+        result[randomIndex] = random.uniform(randomBorder + 0.005, 1)
+
+        target = [0, 0, 0, 0, 0]
+        target[randomIndex] = 1
+
+        return tensor([result], device=calc_device, dtype=float), tensor([target], device=calc_device, dtype=float)
 

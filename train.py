@@ -39,12 +39,17 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         netActor.to(calc_device)
         netCritic.to(calc_device)
 
-    envSearch = td_zero.EnvironmentSearch()
+    beginProbability = 0.95
+    research = td_zero.InEpochResearch()
+    research.isResearchBatch(researchProbability=beginProbability)
+
+    # envSearch = td_zero.EnvironmentSearch()
     start_epoch = 0
     # Если существует файл с сохранённым состоянием нейронной сети, то загружаем параметры сети и тренировки из него
     if os.path.exists(actorCheckPointFile):
         checkpoint = load(actorCheckPointFile)
-        envSearch = checkpoint['environmentResearch']
+        # envSearch = checkpoint['environmentResearch']
+        research = checkpoint['environmentResearch']
         # продолжаем обучение со следующей эпохи
         # start_epoch = checkpoint['epoch'] + 1
         start_epoch = checkpoint['epoch']
@@ -98,22 +103,31 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     # investigationEpoch = False
     # investigationAction = False
 
+
+
     # Необходимо создать этот тензор ВНЕ основного цикла, хотябы ввиде бутафории
     # criticInputs: tensor = tensor([[0]], requares_grad=True)
     for epoch in range(start_epoch, stopEpochNumber):
-        envSearch.accumulToNone(trainset.getTrainDataCount())
-        envSearch._EnvironmentSearch__epochMap.printMaps()
+        # envSearch.accumulToNone(trainset.getTrainDataCount())
+        # envSearch._EnvironmentSearch__epochMap.printMaps()
         print('Critic Learning Rate: ', criticOptimizer.param_groups[0]['lr'])
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
         i = 0
-        print("Investigate Epoch: ", envSearch.isCuriosityEpoch())
+        # С новой эпохой уменьшаем вероятность исследования на очередном батче
+        newProbability = research.researchProbability-0.01
+        if newProbability < 0:
+            # если новая вероятность ушла в минус, закольцовываем на начало
+            newProbability = beginProbability
+        research.isResearchBatch(researchProbability=newProbability)
+        print('Research Probability: ', research.researchProbability)
+        # print("Investigate Epoch: ", envSearch.isCuriosityEpoch())
         # почему-то при использовинии такого варианта, счётчик всегда равен нулю.
         for i, (actorInputs, actorTargets) in enumerate(trainloader, 0):
             actorOptimizer.zero_grad()
             criticOptimizer.zero_grad()
             # td_zero.EnvironmentSearch.AccumulToNone(i, investigationEpoch, trainset.getTrainDataCount())
-            envSearch.setInvestigation(envSearch.isCuriosityEpoch())
+            # envSearch.setInvestigation(envSearch.isCuriosityEpoch())
             # criticInputs.zero
             if calc_device.type == 'cuda':
                 actorInputs, actorTargets = actorInputs.to(calc_device), actorTargets.to(calc_device)
@@ -122,9 +136,11 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
             # print('Actor Outputs: ', actorOutputs)
             # print('Actor Targets: ', actorTargets)
 
-            if envSearch.isInvestigation:
+            # if envSearch.isInvestigation:
+            if research.isResearchBatch(recalculate=True):
                 # если проход исследовательский
-                (actorOutputs, _) = envSearch.generate(actorOutputs.device)
+                # (actorOutputs, _) = envSearch.generate(actorOutputs.device)
+                (actorOutputs, _) = research.generate(actorOutputs.device)
 
             rf = reinf.getReinforcement(actorOutputs, actorTargets)
             actorInputsList = actorInputs[0].tolist()
@@ -141,7 +157,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 previousValue = td.getPreviousValue()
                 TDTarget = td.getTD(rf, criticOutputs)
                 Vt = previousValue
-                envSearch.dataAccumulation(i, envSearch.isCuriosityEpoch(), TDTarget,previousValue)
+                # envSearch.dataAccumulation(envSearch.isCuriosityEpoch(), TDTarget,previousValue)
                 # criticLoss = criticCreterion(previousValue, td.getTD(rf, criticOutputs))
                 # ---
                 # criticLoss = td_zero.AnyLoss.Qmaximization(previousValue, td.getTD(rf, criticOutputs))
@@ -150,7 +166,8 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 # ---
                 criticLoss.backward()
                 criticOptimizer.step()
-                if not envSearch.isInvestigation:
+                # if not envSearch.isInvestigation:
+                if not research.isResearchBatch():
                     actorOptimizer.step()
                     #investigationEpoch = True
 
@@ -193,7 +210,8 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 os.replace(actorCheckPointFile, actorCheckPointFile + '.bak')
 
             save({
-                'environmentResearch': envSearch,
+                # 'environmentResearch': envSearch,
+                'environmentResearch': research,
                 'epoch': epoch,
                 'state_dict': netActor.state_dict(),
                 'optimizer': actorOptimizer.state_dict(),
@@ -211,9 +229,9 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         # investigationEpoch = True if investigationEpoch == False else False
         print('Ошибка эпохи: {}, Уменьшение ошибки эпохи: {}'.format(actorEpochLoss, previousActorEpochLoss - actorEpochLoss))
         success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
-        print('Epoch Success by classes: ', ['{0:6.4f}'.format(x) for x in success])
+        print('Epoch real success action by classes: ', ['{0:6.4f}'.format(x) for x in success])
         fail = [errorByClasses[0, i] / allByClasses[0, i] for i in range(errorByClasses[0].size()[0])]
-        print('Epoch Fail by classes: ', ['{0:6.4f}'.format(x) for x in fail])
+        print('Epoch real fail action by classes: ', ['{0:6.4f}'.format(x) for x in fail])
         # error = [errorByClasses[0, i] / allByClasses[0, i] for i in range(errorByClasses[0].size()[0])]
         # print('Error by classes: ', ['{0:6.3f}'.format(x) for x in error])
 
