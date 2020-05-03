@@ -57,14 +57,14 @@ class CriticNet(nn.Module):
         self.__h1Neuron = nn.Tanh()
         # self.__h1Dropout = nn.Dropout(0.1)
 
-        # self.__h2Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
+        self.__h2Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
         # # self.__h2Neuron = nn.Sigmoid()
-        # self.__h2Neuron = nn.Tanh()
+        self.__h2Neuron = nn.Tanh()
         # self.__h2Dropout = nn.Dropout(0.1)
         #
-        # self.__h3Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
+        self.__h3Linear = nn.Linear(self.__inputFeatures, self.__inputFeatures, bias=False)
         # # self.__h3Neuron = nn.Sigmoid()
-        # self.__h3Neuron = nn.Tanh()
+        self.__h3Neuron = nn.Tanh()
         # self.__h3Dropout = nn.Dropout(0.1)
 
         self.__outLinear = nn.Linear(self.__inputFeatures, self.__outputFeatures, bias=False)
@@ -90,12 +90,12 @@ class CriticNet(nn.Module):
         x = self.__h1Neuron(x)
         # x = self.__h1Dropout(x)
 
-        # x = self.__h2Linear(x)
-        # x = self.__h2Neuron(x)
+        x = self.__h2Linear(x)
+        x = self.__h2Neuron(x)
         # x = self.__h2Dropout(x)
         #
-        # x = self.__h3Linear(x)
-        # x = self.__h3Neuron(x)
+        x = self.__h3Linear(x)
+        x = self.__h3Neuron(x)
         # x = self.__h3Dropout(x)
 
         x = self.__outLinear(x)

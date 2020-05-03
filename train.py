@@ -5,6 +5,7 @@ from torch import device, cuda, nn, load, save, tensor, max, optim
 import os
 import tools
 import td_zero
+import winsound
 
 
 def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPointFile='critic.pth.tar'):
@@ -28,6 +29,13 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
     learningRate = 0.000001
     stopEpochNumber = 100000
+    epochSamples = 5000
+    # начать с 0,001
+    Vt_coef = 0.001
+    vtCoefStart = 0.001
+    # для справки. Изменение alpha даже на 0,001 может вызывать колебания (как минимум первоначальные) Vt до 0,1
+    # Так что, с шагом и величиной alpha надо быть ОЧЕНЬ аккуратным
+    VtCoefStep = 0.001
 
     actorCreterion = nn.MSELoss()
     criticCreterion = nn.MSELoss()
@@ -40,15 +48,31 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         netCritic.to(calc_device)
 
     beginProbability = 0.95
+    # cardMap = {'0.95': 0.001, '0.65': 0.05, '0.30': 0.1}
     research = td_zero.InEpochResearch()
-    research.isResearchBatch(researchProbability=beginProbability)
-
+    # research.isResearchBatch(researchProbability=beginProbability)
+    # research.researchProbability
+    # research.isResearchBatch(researchProbability=beginProbability)
+    # statisticData = td_zero.TrainingDataCollecting(epochSamples)
+    statisticInfo = td_zero.StatisticData(epochSamples)
+    # Счётчик ожидания разрешения на смену альфы
+    waitCounter = 0
+    # Флаг. Текущая эпоха является контролькной?
+    itWasSituationView = False
+    # флаг, текущие данные загружены из чекпоинта?
+    isRestoredTraining = False
     # envSearch = td_zero.EnvironmentSearch()
     start_epoch = 0
     # Если существует файл с сохранённым состоянием нейронной сети, то загружаем параметры сети и тренировки из него
     if os.path.exists(actorCheckPointFile):
         checkpoint = load(actorCheckPointFile)
         # envSearch = checkpoint['environmentResearch']
+        # if checkpoint.get('statistic') != None:
+        Vt_coef = checkpoint['valueAlpha']
+        # statisticData = checkpoint['statistic']
+        statisticInfo = checkpoint['statistic']
+        waitCounter = checkpoint['waitCounter']
+        itWasSituationView = checkpoint['isSituationView']
         research = checkpoint['environmentResearch']
         # продолжаем обучение со следующей эпохи
         # start_epoch = checkpoint['epoch'] + 1
@@ -67,7 +91,14 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         criticOptimizer.load_state_dict(checkpoint['optimizer'])
         if criticOptimizer.param_groups[0]['lr'] != learningRate:
             criticOptimizer.param_groups[0]['lr'] = learningRate
+        isRestoredTraining = True
         # net.eval()
+
+    statisticInfo.afterRestoreCheckPoint()
+    analitic = td_zero.StatisticAnalitic(statisticInfo)
+    driver = td_zero.TrainingControl(analitic, 0.02, 0.03, 3)
+    driver.waitCounter = waitCounter
+    driver.itWasSituationView = itWasSituationView
 
     netActor.train()
     netCritic.train()
@@ -75,16 +106,11 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     reinf = td_zero.Reinforcement()
     td = td_zero.TD_zero(calc_device)
 
-    # for m in netActor.modules():
-    #     if isinstance(m, nn.Linear):
-    #         print(m.weight)
-
     for name, module in netActor.named_modules():
         if name == '_ActorNet__h0Linear':
             print('Actor first hidden layer weights:\n', module.weight[0])
-        elif name == '_ActorNet__outLinear':
-            print('Actor out layer weights:\n', module.weight, '\n---')
-    # print(netActor.modules())
+        # elif name == '_ActorNet__outLinear':
+        #     print('Actor out layer weights:\n', module.weight, '\n---')
 
     previousActorEpochLoss = 1000.0
 
@@ -94,41 +120,63 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     allByClasses = tensor([[0.001, 0.001, 0.001, 0.001, 0.001]], device=calc_device)
     # количество ошибочных попаданий в каждый класс (за эпоху)
     errorByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
-    # outputByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
 
-    # изменили структуру Эры в процессе обучения сети
-    # envSearch._EnvironmentSearch__epochMap.baseMap = [1, 24]
-    deltaV: float = 0.
+    # если у нас есть сохранённая тренировка, то номер стартовой эпохи увеличиваем на 1, чтобы продолжить со следующей
+    # start_epoch = 0 if start_epoch == 0 else start_epoch + 1
 
-    # investigationEpoch = False
-    # investigationAction = False
-
-
-
-    # Необходимо создать этот тензор ВНЕ основного цикла, хотябы ввиде бутафории
-    # criticInputs: tensor = tensor([[0]], requares_grad=True)
     for epoch in range(start_epoch, stopEpochNumber):
         # envSearch.accumulToNone(trainset.getTrainDataCount())
         # envSearch._EnvironmentSearch__epochMap.printMaps()
         print('Critic Learning Rate: ', criticOptimizer.param_groups[0]['lr'])
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
-        i = 0
-        # С новой эпохой уменьшаем вероятность исследования на очередном батче
-        newProbability = research.researchProbability-0.01
-        if newProbability < 0:
-            # если новая вероятность ушла в минус, закольцовываем на начало
-            newProbability = beginProbability
-        research.isResearchBatch(researchProbability=newProbability)
+        # old_alpha = 0.
+        # запоминаем неизменённую текущую альфу, чтобы иметь возможность записать её в чекпоинт
+        # и чтобы после возможного восстановления из чекпоинта вернутся в начало эпохи
+        old_alpha = Vt_coef
+        # запоминаем и старый счётчик ожидания. Если прервётся данная эпоха, восстановимся с этого значения из чекпоинта
+        old_WaitingCounter = driver.waitCounter
+
+        if not isRestoredTraining:
+            # если это заход не с чекпоинта, смело меняем параметры обучения
+            probabilityStep = driver.probabilytyStep(research)
+            newProbability = research.researchProbability - probabilityStep
+
+            if newProbability < 0.:
+                # если новая вероятность ушла в минус, значит переход из Эры в Эру.
+                if driver.itWasSituationView:
+                    # Предыдущая эпоха была эпохохой оценки достижений, просмотром ситуации.
+                    statisticInfo.pushAvrEraData()
+                    # Возвращаемся к обычному обучению. Закольцовываем на начало новой Эры
+                    driver.itWasSituationView = False
+                    newProbability = beginProbability
+                    # Изменяем коэф. альфа
+                    Vt_coef = driver.throttle(vtCoefStart, Vt_coef, VtCoefStep)
+
+                    # звуковой сигнал
+                    frequency = 70  # Set Frequency To 2500 Hertz
+                    duration = 5000  # Set Duration To 1000 ms == 1 second
+                    winsound.Beep(frequency, duration)
+
+                    input('Продолжить...')
+                else:
+                    # Переход из Эры в Эру. На переходе делаем эпоху оценки достижений
+                    # Средние данные по эпохе на этом проходе попадут в коллекцию эпох, а на следующем проходе
+                    # буду пушены в коллекцию эр (перед изменением коэф. альфа)
+                    print('Check Era study situation.')
+                    driver.itWasSituationView = True
+                    newProbability = 0.
+            research.isResearchBatch(researchProbability=newProbability)
+        # восстанавливаем значение флага
+        isRestoredTraining = False
+
         print('Research Probability: ', research.researchProbability)
-        # print("Investigate Epoch: ", envSearch.isCuriosityEpoch())
+        i = 0
         # почему-то при использовинии такого варианта, счётчик всегда равен нулю.
         for i, (actorInputs, actorTargets) in enumerate(trainloader, 0):
             actorOptimizer.zero_grad()
             criticOptimizer.zero_grad()
-            # td_zero.EnvironmentSearch.AccumulToNone(i, investigationEpoch, trainset.getTrainDataCount())
-            # envSearch.setInvestigation(envSearch.isCuriosityEpoch())
-            # criticInputs.zero
+
             if calc_device.type == 'cuda':
                 actorInputs, actorTargets = actorInputs.to(calc_device), actorTargets.to(calc_device)
             actorOutputs = netActor(actorInputs)
@@ -154,26 +202,16 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
             if td.getPreviousValue() is None:
                 td.setPreviousValue(criticOutputs)
             else:
-                previousValue = td.getPreviousValue()
                 TDTarget = td.getTD(rf, criticOutputs)
-                Vt = previousValue
-                # envSearch.dataAccumulation(envSearch.isCuriosityEpoch(), TDTarget,previousValue)
-                # criticLoss = criticCreterion(previousValue, td.getTD(rf, criticOutputs))
-                # ---
-                # criticLoss = td_zero.AnyLoss.Qmaximization(previousValue, td.getTD(rf, criticOutputs))
-                criticLoss = td_zero.AnyLoss.Qinverse(previousValue, td.getTD(rf, criticOutputs))
+                Vt = td.getPreviousValue()
+
+                statisticInfo.addBatchData(Vt, TDTarget)
+                criticLoss = td_zero.AnyLoss.Qinverse(Vt, TDTarget, Vt_coef)
                 td.setPreviousValue(criticOutputs)
-                # ---
                 criticLoss.backward()
                 criticOptimizer.step()
-                # if not envSearch.isInvestigation:
                 if not research.isResearchBatch():
                     actorOptimizer.step()
-                    #investigationEpoch = True
-
-                # for name, module in netActor.named_modules():
-                #     if name == '_ActorNet__h0Linear':
-                #         print(module.weight[0])
 
             (_, maxTargetIndex) = max(actorTargets, 1)
             (_, maxOutputIndex) = max(actorOutputs, 1)
@@ -185,48 +223,56 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 errorByClasses[0, maxOutputIndex.item()] += 1
             allByClasses += actorTargets
 
-            # success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
-            # print('Success by classes: ', ['{0:6.3f}'.format(x) for x in success])
-            # success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
-            # print('Success by classes: ', ['{0:6.3f}'.format(x) for x in outputByClasses[0]])
-            # print(rf)
-
             actorLoss = actorCreterion(actorOutputs, actorTargets)
-
-            # actorLoss.backward()
-            # actorOptimizer.step()
-
 
             actorEpochLoss += actorLoss.item()
             actorBatchLoss += actorLoss.item()
             if (i+1) % 1000 == 0:  # print every 200 mini-batches
                 print('[%d, %5d] mini-batch Actor avr loss: %.7f, TD target: %.7f, Value t: %.7f, criticLoss: %.7f' %
                       (epoch, i+1, actorBatchLoss / 1000, TDTarget, Vt, criticLoss))
-                # print('[{0:6.3f}, {1:6.3f}] mini-batch actor avr loss: {2:6.3f}; mini-batch critic avr loss: {3:6.3f}'.format(epoch, i, ))
-                # actorBatchLoss = 0.0
                 actorBatchLoss = 0.0
 
-            if os.path.exists(actorCheckPointFile) and os.path.getsize(actorCheckPointFile) != 0:
-                os.replace(actorCheckPointFile, actorCheckPointFile + '.bak')
+                if os.path.exists(actorCheckPointFile) and os.path.getsize(actorCheckPointFile) != 0:
+                    os.replace(actorCheckPointFile, actorCheckPointFile + '.bak')
 
-            save({
-                # 'environmentResearch': envSearch,
-                'environmentResearch': research,
-                'epoch': epoch,
-                'state_dict': netActor.state_dict(),
-                'optimizer': actorOptimizer.state_dict(),
-            }, actorCheckPointFile)
+                save({
+                    # 'environmentResearch': envSearch,
+                    'valueAlpha': old_alpha,
+                    'statistic': statisticInfo,
+                    'waitCounter': old_WaitingCounter,
+                    'isSituationView': driver.itWasSituationView,
+                    # 'analitic': analitic,
+                    # 'driver': driver,
+                    'environmentResearch': research,
+                    'epoch': epoch,
+                    'state_dict': netActor.state_dict(),
+                    'optimizer': actorOptimizer.state_dict(),
+                }, actorCheckPointFile)
 
-            if os.path.exists(criticCheckPointFile) and os.path.getsize(criticCheckPointFile) != 0:
-                os.replace(criticCheckPointFile, criticCheckPointFile + '.bak')
+                if os.path.exists(criticCheckPointFile) and os.path.getsize(criticCheckPointFile) != 0:
+                    os.replace(criticCheckPointFile, criticCheckPointFile + '.bak')
 
-            save({
-                'epoch': epoch,
-                'state_dict': netCritic.state_dict(),
-                'optimizer': criticOptimizer.state_dict(),
-            }, criticCheckPointFile)
+                save({
+                    'epoch': epoch,
+                    'state_dict': netCritic.state_dict(),
+                    'optimizer': criticOptimizer.state_dict(),
+                }, criticCheckPointFile)
+        # запечатываем наколенные за эпоху данные
+        # statisticInfo.closeEpochData()
+        statisticInfo.pushAvrEpochData()
         # Чередуем исследовательские и неисследовательские эпохи
         # investigationEpoch = True if investigationEpoch == False else False
+        forPrint1 = statisticInfo.avrEpochCollection[len(statisticInfo.avrEpochCollection)-1]
+        forPrint2 = analitic.avrEpochChange('value') if analitic.avrEpochChange('value') is not None else 0.
+        print('Epoch TD target: {0:6.4f}, Vt: {1:6.4f}, Vt change for 3 epoch: {2:6.4f}, alpha: {3:6.4f}'.
+              format(forPrint1.avr['td-target'],
+                        forPrint1.avr['value'],
+                        forPrint2,
+                        Vt_coef))
+        # print('Epoch TD target: {0:6.4f}, Vt: {1:6.4f}, Vt change for 3 epoch: {2:6.4f}'.
+        #       format(statisticData.getAvrTDtarget()[0].item(),
+        #             statisticData.getAvrVt()[0].item(),
+        #             statisticData.get3epochVT()[0].item()))
         print('Ошибка эпохи: {}, Уменьшение ошибки эпохи: {}'.format(actorEpochLoss, previousActorEpochLoss - actorEpochLoss))
         success = [successByClasses[0, i] / allByClasses[0, i] for i in range(successByClasses[0].size()[0])]
         print('Epoch real success action by classes: ', ['{0:6.4f}'.format(x) for x in success])
@@ -238,13 +284,18 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         for name, module in netActor.named_modules():
             if name == '_ActorNet__h0Linear':
                 print('Actor first hidden layer weights:\n', module.weight[0], '\n---')
-            elif name == '_ActorNet__outLinear':
-                print('Actor out layer weights:\n', module.weight, '\n---')
+            # elif name == '_ActorNet__outLinear':
+            #     print('Actor out layer weights:\n', module.weight, '\n---')
 
         successByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
         allByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
         errorByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
 
         previousActorEpochLoss = actorEpochLoss
+
+        # if epoch == 0:
+        #     # Прошедшая эпоха была нулевой, где мы смотрели чистый выход сетей без исследований.
+        #     # Но в дальнейшем, начинаются эпохи с исследованиями. УРА!
+        #     research.researchProbability = beginProbability
 
 trainNet()
