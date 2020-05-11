@@ -1,11 +1,12 @@
 import net
 import data
 from torch.utils.data import DataLoader
-from torch import device, cuda, nn, load, save, tensor, max, optim
+from torch import device, cuda, nn, load, save, tensor, max, optim, squeeze, unsqueeze
 import os
 import tools
 import td_zero
 import winsound
+import stats
 
 
 def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPointFile='critic.pth.tar'):
@@ -30,12 +31,6 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
     learningRate = 0.000001
     stopEpochNumber = 100000
     epochSamples = 5000
-    # начать с 0,001
-    Vt_coef = 0.001
-    vtCoefStart = 0.001
-    # для справки. Изменение alpha даже на 0,001 может вызывать колебания (как минимум первоначальные) Vt до 0,1
-    # Так что, с шагом и величиной alpha надо быть ОЧЕНЬ аккуратным
-    VtCoefStep = 0.001
 
     actorCreterion = nn.MSELoss()
     criticCreterion = nn.MSELoss()
@@ -47,16 +42,16 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         netActor.to(calc_device)
         netCritic.to(calc_device)
 
-    beginProbability = 0.95
+    # beginProbability = 0.95
     # cardMap = {'0.95': 0.001, '0.65': 0.05, '0.30': 0.1}
-    research = td_zero.InEpochResearch()
+    research = stats.InEpochResearch()
     # research.isResearchBatch(researchProbability=beginProbability)
     # research.researchProbability
     # research.isResearchBatch(researchProbability=beginProbability)
     # statisticData = td_zero.TrainingDataCollecting(epochSamples)
-    statisticInfo = td_zero.StatisticData(epochSamples)
+    statisticInfo = stats.StatisticData(epochSamples)
     # Счётчик ожидания разрешения на смену альфы
-    waitCounter = 0
+    # waitCounter = 0
     # Флаг. Текущая эпоха является контролькной?
     itWasSituationView = False
     # флаг, текущие данные загружены из чекпоинта?
@@ -68,10 +63,10 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         checkpoint = load(actorCheckPointFile)
         # envSearch = checkpoint['environmentResearch']
         # if checkpoint.get('statistic') != None:
-        Vt_coef = checkpoint['valueAlpha']
+        # Vt_coef = checkpoint['valueAlpha']
         # statisticData = checkpoint['statistic']
         statisticInfo = checkpoint['statistic']
-        waitCounter = checkpoint['waitCounter']
+        # waitCounter = checkpoint['waitCounter']
         itWasSituationView = checkpoint['isSituationView']
         research = checkpoint['environmentResearch']
         # продолжаем обучение со следующей эпохи
@@ -95,9 +90,9 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         # net.eval()
 
     statisticInfo.afterRestoreCheckPoint()
-    analitic = td_zero.StatisticAnalitic(statisticInfo)
-    driver = td_zero.TrainingControl(analitic, 0.02, 0.03, 3)
-    driver.waitCounter = waitCounter
+    analitic = stats.StatisticAnalitic(statisticInfo)
+    driver = td_zero.TrainingControl()
+    # driver.waitCounter = waitCounter
     driver.itWasSituationView = itWasSituationView
 
     netActor.train()
@@ -105,6 +100,9 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
     reinf = td_zero.Reinforcement()
     td = td_zero.TD_zero(calc_device)
+
+    # test = reinf.getReinforcement
+    # print(type(test))
 
     for name, module in netActor.named_modules():
         if name == '_ActorNet__h0Linear':
@@ -130,44 +128,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         print('Critic Learning Rate: ', criticOptimizer.param_groups[0]['lr'])
         actorEpochLoss = 0.0
         actorBatchLoss = 0.0
-        # old_alpha = 0.
-        # запоминаем неизменённую текущую альфу, чтобы иметь возможность записать её в чекпоинт
-        # и чтобы после возможного восстановления из чекпоинта вернутся в начало эпохи
-        old_alpha = Vt_coef
-        # запоминаем и старый счётчик ожидания. Если прервётся данная эпоха, восстановимся с этого значения из чекпоинта
-        old_WaitingCounter = driver.waitCounter
 
-        if not isRestoredTraining:
-            # если это заход не с чекпоинта, смело меняем параметры обучения
-            probabilityStep = driver.probabilytyStep(research)
-            newProbability = research.researchProbability - probabilityStep
-
-            if newProbability < 0.:
-                # если новая вероятность ушла в минус, значит переход из Эры в Эру.
-                if driver.itWasSituationView:
-                    # Предыдущая эпоха была эпохохой оценки достижений, просмотром ситуации.
-                    statisticInfo.pushAvrEraData()
-                    # Возвращаемся к обычному обучению. Закольцовываем на начало новой Эры
-                    driver.itWasSituationView = False
-                    newProbability = beginProbability
-                    # Изменяем коэф. альфа
-                    Vt_coef = driver.throttle(vtCoefStart, Vt_coef, VtCoefStep)
-
-                    # звуковой сигнал
-                    frequency = 70  # Set Frequency To 2500 Hertz
-                    duration = 5000  # Set Duration To 1000 ms == 1 second
-                    winsound.Beep(frequency, duration)
-
-                    input('Продолжить...')
-                else:
-                    # Переход из Эры в Эру. На переходе делаем эпоху оценки достижений
-                    # Средние данные по эпохе на этом проходе попадут в коллекцию эпох, а на следующем проходе
-                    # буду пушены в коллекцию эр (перед изменением коэф. альфа)
-                    print('Check Era study situation.')
-                    driver.itWasSituationView = True
-                    newProbability = 0.
-            research.isResearchBatch(researchProbability=newProbability)
-        # восстанавливаем значение флага
         isRestoredTraining = False
 
         print('Research Probability: ', research.researchProbability)
@@ -184,34 +145,62 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
             # print('Actor Outputs: ', actorOutputs)
             # print('Actor Targets: ', actorTargets)
 
-            # if envSearch.isInvestigation:
-            if research.isResearchBatch(recalculate=True):
-                # если проход исследовательский
-                # (actorOutputs, _) = envSearch.generate(actorOutputs.device)
-                (actorOutputs, _) = research.generate(actorOutputs.device)
+            # Получить подкрепление и значение оценки функции ценности для пяти вариантов действий
+            # (reinf_tp1, Q_tp1, actorCuriosityTargets) = \
+            #     research.getVariants(netCritic, actorInputs, actorTargets, reinf, calc_device)
+            (reinf_tp1, Q_tp1, actorCuriosityTargets) = \
+                research.getVariants(netCritic, actorInputs, actorTargets, reinf.getReinforcement, calc_device)
+            # Предполагается, что максимальное подкрепление будет только в одном варианте
+            # Величина максимального подкрепления и его индекс в общем тензоре тензоре
+            # То есть, это результат ИДЕАЛЬНЫХ действий актора
+            (maxReinf, maxRindex) = max(reinf_tp1, 0)
+            # Одномерный тензор превращаем в двумерный
+            maxReinf.unsqueeze_(0)
+            maxRindex = maxRindex.item()
+            # maxReinf = max(reinf_tp1)
+            # Максимальная величина оценки и её индекс в общем тензоре
+            (maxQtp1, maxQtp1Index) = max(Q_tp1, 0)
+            maxQtp1.unsqueeze_(0)
+            maxQtp1Index = maxQtp1Index.item()
 
-            rf = reinf.getReinforcement(actorOutputs, actorTargets)
-            actorInputsList = actorInputs[0].tolist()
-            # actorInputsList.append(rf)
+            # Результат неидеальных действий актора, т. е. тех действий, которые будут продиктованы максимальной
+            # величинеой функции оценки
+            reinfByMaxQtp1 = unsqueeze(reinf_tp1[maxQtp1Index], 0)
 
-            criticInputs = tools.expandTensor(actorOutputs, actorInputsList)
-            criticOutputs = netCritic(criticInputs)
+            #
+            # Стратегия. На каждом шаге выбирается вариант действий с максимальным Qtp1
+            #
 
-            # Если это первый проход, то просто запоминаем предполагаемую величину ценнтости
+            # Если это первый проход, то просто запоминаем предполагаемую величину ценности
             # Оптимизация проводится со второго прохода
             if td.getPreviousValue() is None:
-                td.setPreviousValue(criticOutputs)
+                # previous =
+                td.setPreviousValue(maxQtp1)
             else:
-                TDTarget = td.getTD(rf, criticOutputs)
+                # Максимальная оценка Qt+1 должна сходиться к максимальному подкреплению rt+1 на каждом варианте
+                # данных (так как различные варианты не связаны между собой причинно-следственной связью, в данном
+                # случае)
+                TDTarget = td.getTD(reinfByMaxQtp1, maxQtp1)
                 Vt = td.getPreviousValue()
 
                 statisticInfo.addBatchData(Vt, TDTarget)
-                criticLoss = td_zero.AnyLoss.Qinverse(Vt, TDTarget, Vt_coef)
-                td.setPreviousValue(criticOutputs)
+
+                # выход актора, который должен быть, чтобы получить максимальный Qt+1
+                # actorCuriosityOutputs = \
+                #     tensor(actorCuriosityTargets[maxQtp1Index.item()], dtype=float, device=calc_device)
+                actorCuriosityOutputs = actorCuriosityTargets[maxQtp1Index].clone().detach().unsqueeze(0)
+                actorLoss = actorCreterion(actorOutputs, actorCuriosityOutputs)
+
+                # criticLoss = td_zero.AnyLoss.TD0_Grammon(TDTarget, Vt)
+                criticLoss = criticCreterion(Vt, TDTarget)
+
+                td.setPreviousValue(maxQtp1)
+
                 criticLoss.backward()
+                actorLoss.backward()
+
                 criticOptimizer.step()
-                if not research.isResearchBatch():
-                    actorOptimizer.step()
+                actorOptimizer.step()
 
             (_, maxTargetIndex) = max(actorTargets, 1)
             (_, maxOutputIndex) = max(actorOutputs, 1)
@@ -237,9 +226,9 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
                 save({
                     # 'environmentResearch': envSearch,
-                    'valueAlpha': old_alpha,
+                    # 'valueAlpha': old_alpha,
                     'statistic': statisticInfo,
-                    'waitCounter': old_WaitingCounter,
+                    # 'waitCounter': old_WaitingCounter,
                     'isSituationView': driver.itWasSituationView,
                     # 'analitic': analitic,
                     # 'driver': driver,
@@ -263,12 +252,10 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         # Чередуем исследовательские и неисследовательские эпохи
         # investigationEpoch = True if investigationEpoch == False else False
         forPrint1 = statisticInfo.avrEpochCollection[len(statisticInfo.avrEpochCollection)-1]
-        forPrint2 = analitic.avrEpochChange('value') if analitic.avrEpochChange('value') is not None else 0.
-        print('Epoch TD target: {0:6.4f}, Vt: {1:6.4f}, Vt change for 3 epoch: {2:6.4f}, alpha: {3:6.4f}'.
+        # forPrint2 = analitic.avrEpochChange('value') if analitic.avrEpochChange('value') is not None else 0.
+        print('Epoch TD target: {0:6.4f}, Vt: {1:6.4f}'.
               format(forPrint1.avr['td-target'],
-                        forPrint1.avr['value'],
-                        forPrint2,
-                        Vt_coef))
+                        forPrint1.avr['value']))
         # print('Epoch TD target: {0:6.4f}, Vt: {1:6.4f}, Vt change for 3 epoch: {2:6.4f}'.
         #       format(statisticData.getAvrTDtarget()[0].item(),
         #             statisticData.getAvrVt()[0].item(),
@@ -292,10 +279,5 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
         errorByClasses = tensor([[0.0, 0.0, 0.0, 0.0, 0.0]], device=calc_device)
 
         previousActorEpochLoss = actorEpochLoss
-
-        # if epoch == 0:
-        #     # Прошедшая эпоха была нулевой, где мы смотрели чистый выход сетей без исследований.
-        #     # Но в дальнейшем, начинаются эпохи с исследованиями. УРА!
-        #     research.researchProbability = beginProbability
 
 trainNet()
