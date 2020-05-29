@@ -1,4 +1,4 @@
-from torch import tensor, max, device, float, inverse, sub, mm, exp, detach
+from torch import tensor, max, device, float, inverse, sub, mm, exp, detach, abs
 # import stats
 
 
@@ -11,7 +11,7 @@ class TD_zero():
         # Устройство, на котором идёт расчёт тензоров
         self.__device = device
 
-    def getTD(self, reinforcement: tensor, value_est: tensor, TDTargetOnly=True):
+    def getTD(self, reinforcement: tensor, value_est: tensor, TDTargetOnly=True, useEstValue=True):
         """
         Получить временную разницу
 
@@ -22,6 +22,7 @@ class TD_zero():
         :rtype tensor:
         """
         previousValue = 0 if TDTargetOnly else self.__valuePrevious
+        value = value_est if useEstValue else 0
         # если максимальное возможное подкрепление больше 1, то результат будет тоже больше единицы.
         # ВЫход сигмоиды не может быть
         # больше 1, а значит такой вариант ошибочен. Необходимо, чтобы сумма t+1 подкрепления и t+1 оценки функции
@@ -37,7 +38,7 @@ class TD_zero():
 
         # подкрепление -2..2, выход выходного нейрона -1..1
         # в формуле делим подкрепление на 2, чтобы на выходе нейрона был максимум
-        result = reinforcement / 2 + self.__gamma * value_est - previousValue
+        result = reinforcement / 2 + self.__gamma * value - previousValue
         # так как мы получаем гарантированную реакцию на каждом испытании, vslue_est на каждом ходе должно быть
         # равно нулю?
         # todo проверить
@@ -65,7 +66,7 @@ class Reinforcement():
     """
     def __init__(self):
         # Подкрепление в случае удачного угадывания класса
-        self.__reinforcementByClass = [2., 2., 2., 2., 2.]
+        self.__reinforcementByClass = [2.0, 2.0, 2.0, 2.0, 2.0]
         # Наказание, если актор выбрал этот класс ошибочно
         self.__punishmentByClass = [-0.0, -0.0, -0.0, -0.0, -0.0]
 
@@ -86,6 +87,27 @@ class Reinforcement():
         else:
             # если актор не правильно поступил, то по этому же классу он получает наказание (по правильному классу)
             return tensor([[self.__punishmentByClass[maxTargetIndex]]], dtype=float, device=outputs.device)
+
+
+class Reinforcement5:
+    def __init__(self):
+        # счётчик-аккумулятор количеств правильных действий актора за пять шагов
+        self.__5StepWinCounter = 0
+        # счётчик количества шагов
+        self.__stepCounter = 0
+
+    def incCounter(self):
+        self.__stepCounter += 1
+
+    def incWinCounter(self, reinforcement: tensor):
+        if reinforcement[0].item() > 0:
+            self.__5StepWinCounter += 1
+
+    def getReinforcement(self):
+        if self.__stepCounter == 4 and self.__5StepWinCounter == 4:
+            return self.__stepCounter, 1
+        else:
+            return self.__stepCounter, 0
 
 
 class AnyLoss():
@@ -135,6 +157,10 @@ class AnyLoss():
         deltaQ = sub(TDTarget, detach(Qt))
         # градиент будет вычисляться только по Qt
         return deltaQ.mm(Qt)
+
+    @classmethod
+    def ReinfTarget(cls, reinforcement: tensor, Qt: tensor):
+        return reinforcement - Qt
 
 
 class TrainingControl:

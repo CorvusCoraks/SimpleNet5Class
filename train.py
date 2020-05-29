@@ -1,12 +1,13 @@
 import net
 import data
 from torch.utils.data import DataLoader
-from torch import device, cuda, nn, load, save, tensor, max, optim, squeeze, unsqueeze
+from torch import device, cuda, nn, load, save, tensor, max, optim, squeeze, unsqueeze, autograd
 import os
 import tools
 import td_zero
 import winsound
 import stats
+import random
 
 
 def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPointFile='critic.pth.tar'):
@@ -24,6 +25,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
     # def setPathsInColab(colabActorFile, colabCriticactor=actorCheckPointFile, critic=criticCheckPointFile):
 
+    autograd.set_detect_anomaly(True)
 
     netActor = net.ActorNet(True)
     netCritic = net.CriticNet(True)
@@ -100,6 +102,7 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
 
     reinf = td_zero.Reinforcement()
     td = td_zero.TD_zero(calc_device)
+    reinf5 = td_zero.Reinforcement5()
 
     # test = reinf.getReinforcement
     # print(type(test))
@@ -155,12 +158,12 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
             # То есть, это результат ИДЕАЛЬНЫХ действий актора
             (maxReinf, maxRindex) = max(reinf_tp1, 0)
             # Одномерный тензор превращаем в двумерный
-            maxReinf.unsqueeze_(0)
+            maxReinf = unsqueeze(maxReinf, 0)
             maxRindex = maxRindex.item()
             # maxReinf = max(reinf_tp1)
             # Максимальная величина оценки и её индекс в общем тензоре
             (maxQtp1, maxQtp1Index) = max(Q_tp1, 0)
-            maxQtp1.unsqueeze_(0)
+            maxQtp1 = unsqueeze(maxQtp1, 0)
             maxQtp1Index = maxQtp1Index.item()
 
             # Результат неидеальных действий актора, т. е. тех действий, которые будут продиктованы максимальной
@@ -177,22 +180,47 @@ def trainNet(savePath='.\\', actorCheckPointFile='actor.pth.tar', criticCheckPoi
                 # previous =
                 td.setPreviousValue(maxQtp1)
             else:
+                (step, rf5) = reinf5.getReinforcement()
+                if step == 4:
+                    pass
+                else:
+                    pass
                 # Максимальная оценка Qt+1 должна сходиться к максимальному подкреплению rt+1 на каждом варианте
                 # данных (так как различные варианты не связаны между собой причинно-следственной связью, в данном
                 # случае)
-                TDTarget = td.getTD(reinfByMaxQtp1, maxQtp1)
+                TDTarget = td.getTD(reinfByMaxQtp1, maxQtp1, useEstValue=False)
                 Vt = td.getPreviousValue()
 
                 statisticInfo.addBatchData(Vt, TDTarget)
 
-                # выход актора, который должен быть, чтобы получить максимальный Qt+1
-                # actorCuriosityOutputs = \
-                #     tensor(actorCuriosityTargets[maxQtp1Index.item()], dtype=float, device=calc_device)
-                actorCuriosityOutputs = actorCuriosityTargets[maxQtp1Index].clone().detach().unsqueeze(0)
-                actorLoss = actorCreterion(actorOutputs, actorCuriosityOutputs)
+                testRandom = random.uniform(0, 1)
+                # testRandom = 0.4
+                if testRandom < 0.4:
+                    curiosityIndex = random.choice([0, 1, 2, 3, 4])
+                    TDTarget = reinf_tp1[curiosityIndex]
+                    TDTarget = unsqueeze(TDTarget, 0) / 2
+                    Vt = Q_tp1[curiosityIndex]
+                    Vt = unsqueeze(Vt, 0)
+                    # Vt.unsqueeze_(0)
+                    # TDTarget = reinfByMaxQtp1 / 2
+                    # Vt = maxQtp1
+                    actorCuriosityOutputs = actorCuriosityTargets[curiosityIndex].clone().detach().unsqueeze(0)
+                else:
+                    TDTarget = reinfByMaxQtp1 / 2
+                    Vt = maxQtp1
+                    actorCuriosityOutputs = actorCuriosityTargets[maxQtp1Index].clone().detach().unsqueeze(0)
+
+                # TDTarget = reinfByMaxQtp1 / 2
+                # Vt = maxQtp1
+                # actorCuriosityOutputs = actorCuriosityTargets[maxQtp1Index].clone().detach().unsqueeze(0)
+
+                actorLoss = actorCreterion(actorCuriosityOutputs, actorOutputs)
+
+
+                criticLoss = criticCreterion(TDTarget, Vt)
 
                 # criticLoss = td_zero.AnyLoss.TD0_Grammon(TDTarget, Vt)
-                criticLoss = criticCreterion(Vt, TDTarget)
+                # criticLoss = criticCreterion(Vt, TDTarget)
 
                 td.setPreviousValue(maxQtp1)
 

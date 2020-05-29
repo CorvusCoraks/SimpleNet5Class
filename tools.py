@@ -41,3 +41,6 @@ def expandTensor1d(inputTensor: tensor, additional: list):
         result[i] = additional[j]
         j += 1
     return result
+
+# def random5generate():
+#     pass
